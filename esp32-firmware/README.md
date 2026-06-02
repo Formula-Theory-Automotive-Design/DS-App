@@ -9,7 +9,7 @@ library** as the desktop backend — no fork, no copy.
 `../../crsf-core` by relative path:
 
 ```
-crsf-system/
+<repo root>/
 ├── crsf-core/                      <-- the one and only implementation
 └── esp32-firmware/
     └── components/crsf-core/       <-- IDF component that points back at it
