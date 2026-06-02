@@ -1,0 +1,7 @@
+# Project defaults applied on first configure (idf.py picks these up before
+# generating sdkconfig). Override per-board with `idf.py menuconfig`.
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# CRSF is latency-sensitive; a 1 kHz tick keeps vTaskDelay granularity tight.
+CONFIG_FREERTOS_HZ=1000
