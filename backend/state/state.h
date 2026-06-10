@@ -14,17 +14,16 @@ namespace backend {
 struct SystemState {
     crsf::LinkStats   link;
     crsf::BatteryData battery;
-    crsf::GPSData     gps;
     JoystickState     joystick;
 
     // "have we ever received one of these?" flags, so the frontend can tell
     // real zeros from missing telemetry.
     bool hasLink    = false;
     bool hasBattery = false;
-    bool hasGps     = false;
 
-    std::uint32_t packetCount = 0;
+    std::uint32_t packetCount = 0;  // real telemetry frames (echoes excluded)
     std::uint32_t crcErrors   = 0;
+    std::uint32_t echoFrames  = 0;  // self-echoes dropped on the half-duplex wire
 };
 
 // Thread-safe wrapper. Mutate under update(), read a consistent copy via

@@ -6,6 +6,9 @@ add_executable(backend
     main.cpp
     serial/serial_port.cpp
     hid/joystick.cpp
+    mapping/channel_map.cpp
+    radio/link_config.cpp
+    radio/elrs_link.cpp
     state/state.h
     websocket/sha1.cpp
     websocket/ws_server.cpp

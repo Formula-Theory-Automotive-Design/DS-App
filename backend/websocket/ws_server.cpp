@@ -194,7 +194,7 @@ void WebSocketServer::acceptClient() {
         setNonBlocking(fd);
         int yes = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
-        clients_.push_back(Client{fd, false, {}});
+        clients_.push_back(Client{fd, false, {}, {}});
         std::lock_guard<std::mutex> lock(mutex_);
         client_count_ = clients_.size();
     }
@@ -235,49 +235,90 @@ void WebSocketServer::serviceClient(std::size_t idx) {
         return;
     }
 
-    // Drain inbound frames. We only care about close (0x8) and ping (0x9);
-    // any data frames are ignored (this is a push-only server).
-    std::uint8_t hdr[2];
-    ssize_t n = ::read(c.fd, hdr, 2);
-    if (n == 0) { dropClient(idx); return; }
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return;
-        dropClient(idx);
-        return;
+    // Pull whatever bytes are available into the per-client buffer, then parse
+    // out any complete frames. Reading into a buffer (rather than assuming a
+    // whole frame is present) keeps multi-read save payloads intact.
+    char buf[4096];
+    for (;;) {
+        ssize_t n = ::read(c.fd, buf, sizeof(buf));
+        if (n == 0) { dropClient(idx); return; }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            dropClient(idx);
+            return;
+        }
+        c.inbuf.append(buf, static_cast<std::size_t>(n));
+        if (static_cast<std::size_t>(n) < sizeof(buf)) break;
     }
-    if (n < 2) return;  // partial; fine to drop on the floor for our purposes
+    // A client that floods without ever completing a frame is misbehaving.
+    if (c.inbuf.size() > (1u << 20)) { dropClient(idx); return; }
+    if (!processFrames(c)) dropClient(idx);  // c may be invalid hereafter
+}
 
-    const std::uint8_t opcode = hdr[0] & 0x0F;
-    std::uint64_t len = hdr[1] & 0x7F;
-    const bool masked = (hdr[1] & 0x80) != 0;
+// Parse and dispatch every complete frame buffered in c.inbuf, consuming the
+// bytes it uses. Returns false if the client should be dropped (close frame or
+// a failed write). Handles fragmentation by accumulating payloads in c.frag.
+bool WebSocketServer::processFrames(Client& c) {
+    std::string& b = c.inbuf;
+    std::size_t off = 0;
+    const int fd = c.fd;
 
-    std::uint8_t ext[8];
-    if (len == 126) { if (::read(c.fd, ext, 2) == 2) len = (ext[0] << 8) | ext[1]; }
-    else if (len == 127) {
-        if (::read(c.fd, ext, 8) == 8) {
+    for (;;) {
+        if (b.size() - off < 2) break;
+        const auto u = [&](std::size_t i) { return static_cast<std::uint8_t>(b[i]); };
+
+        const bool fin    = (u(off) & 0x80) != 0;
+        const int  opcode =  u(off) & 0x0F;
+        const bool masked = (u(off + 1) & 0x80) != 0;
+        std::uint64_t len =  u(off + 1) & 0x7F;
+        std::size_t pos   = off + 2;
+
+        if (len == 126) {
+            if (b.size() - off < 4) break;
+            len = (static_cast<std::uint64_t>(u(pos)) << 8) | u(pos + 1);
+            pos += 2;
+        } else if (len == 127) {
+            if (b.size() - off < 10) break;
             len = 0;
-            for (int i = 0; i < 8; ++i) len = (len << 8) | ext[i];
+            for (int i = 0; i < 8; ++i) len = (len << 8) | u(pos + i);
+            pos += 8;
+        }
+        std::uint8_t mask[4] = {0, 0, 0, 0};
+        if (masked) {
+            if (b.size() - pos < 4) break;
+            for (int i = 0; i < 4; ++i) mask[i] = u(pos + i);
+            pos += 4;
+        }
+        if (b.size() - pos < len) break;  // full payload not here yet
+
+        std::string payload = b.substr(pos, len);
+        if (masked)
+            for (std::size_t i = 0; i < payload.size(); ++i)
+                payload[i] = static_cast<char>(payload[i] ^ mask[i & 3]);
+        off = pos + len;
+
+        if (opcode == 0x8) {            // close
+            return false;
+        } else if (opcode == 0x9) {     // ping -> pong (echo payload, max 125)
+            std::string pong;
+            pong.push_back(static_cast<char>(0x8A));
+            pong.push_back(static_cast<char>(payload.size() & 0x7F));
+            pong += payload;
+            if (::send(fd, pong.data(), pong.size(), MSG_NOSIGNAL) < 0) return false;
+        } else if (opcode == 0xA) {     // pong -> ignore
+        } else {                        // 0x0 continuation, 0x1 text, 0x2 binary
+            c.frag += payload;
+            if (fin) {
+                std::string msg;
+                msg.swap(c.frag);
+                if (onMessage_)
+                    onMessage_(msg, [fd](const std::string& r) { sendTextFrame(fd, r); });
+            }
         }
     }
-    std::uint8_t mask[4] = {0, 0, 0, 0};
-    if (masked) { if (::read(c.fd, mask, 4) != 4) { dropClient(idx); return; } }
 
-    // Consume (and discard) the payload.
-    std::uint64_t remaining = len;
-    char tmp[512];
-    while (remaining > 0) {
-        ssize_t r = ::read(c.fd, tmp,
-                           remaining < sizeof(tmp) ? remaining : sizeof(tmp));
-        if (r <= 0) break;
-        remaining -= static_cast<std::uint64_t>(r);
-    }
-
-    if (opcode == 0x8) {            // close
-        dropClient(idx);
-    } else if (opcode == 0x9) {     // ping -> pong (empty)
-        std::uint8_t pong[2] = {0x8A, 0x00};
-        if (::write(c.fd, pong, 2) < 0) dropClient(idx);
-    }
+    if (off > 0) b.erase(0, off);
+    return true;
 }
 
 void WebSocketServer::dropClient(std::size_t idx) {

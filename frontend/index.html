@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Driver Station — Telemetry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        #08090c;
+    --bg2:       #0c0f15;
+    --panel:     #0f131b;
+    --panel-hi:  #141a24;
+    --line:      #1d2430;
+    --line-hi:   #2b3645;
+    --txt:       #e9eef5;
+    --dim:       #6b7888;
+    --faint:     #404b5a;
+    --signal:    #5ef38c;   /* phosphor green — live / good */
+    --signal-dk: #1c3d2a;
+    --amber:     #ffb13b;   /* hazard — warning */
+    --red:       #ff4d54;   /* danger */
+    --cyan:      #4fd6ff;   /* data accent */
+    --glow:      0 0 0 1px rgba(94,243,140,.15), 0 0 24px -4px rgba(94,243,140,.35);
+    --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    --cond: 'Saira Condensed', 'Bahnschrift', 'Oswald', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    color: var(--txt);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.4;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #131a26 0%, transparent 55%),
+      radial-gradient(140% 120% at 100% 110%, #10161f 0%, transparent 50%),
+      var(--bg);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* technical grid + scanline atmosphere */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.018) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,.018) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(120% 100% at 50% 0%, #000 40%, transparent 92%);
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    background: repeating-linear-gradient(
+      to bottom, transparent 0 2px, rgba(0,0,0,.18) 2px 3px);
+    mix-blend-mode: multiply; opacity: .35;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 14px 22px;
+    background: linear-gradient(180deg, rgba(10,13,18,.96), rgba(10,13,18,.86));
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(8px);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; margin-right: auto; }
+  .mark {
+    font-family: var(--cond); font-weight: 700; font-size: 13px; letter-spacing: .22em;
+    color: var(--bg); background: var(--signal); padding: 3px 8px 2px;
+    border-radius: 3px; transform: skewX(-8deg); box-shadow: var(--glow);
+  }
+  .brand h1 {
+    font-family: var(--cond); font-weight: 600; font-size: 21px; margin: 0;
+    letter-spacing: .14em; text-transform: uppercase;
+  }
+  .brand .sub {
+    font-family: var(--cond); font-size: 12px; letter-spacing: .28em;
+    color: var(--dim); text-transform: uppercase;
+  }
+
+  .field {
+    display: flex; align-items: center; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg2); overflow: hidden;
+  }
+  .field .tag {
+    font-family: var(--cond); font-size: 11px; letter-spacing: .18em; color: var(--faint);
+    padding: 0 9px; text-transform: uppercase; border-right: 1px solid var(--line);
+    align-self: stretch; display: flex; align-items: center; background: rgba(255,255,255,.02);
+  }
+  header input {
+    background: transparent; color: var(--cyan); border: 0; outline: none;
+    padding: 8px 10px; width: 188px; font-family: var(--mono); font-size: 13px;
+  }
+  header button {
+    font-family: var(--cond); letter-spacing: .14em; text-transform: uppercase;
+    font-size: 13px; font-weight: 600;
+    background: var(--signal); color: #04130a; border: 0; border-radius: 6px;
+    padding: 8px 16px; cursor: pointer; transition: filter .15s, transform .05s;
+  }
+  header button:hover { filter: brightness(1.08); }
+  header button:active { transform: translateY(1px); }
+  header button.live { background: transparent; color: var(--red); box-shadow: inset 0 0 0 1px var(--red); }
+
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--cond); font-size: 13px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%; background: var(--red);
+    box-shadow: 0 0 0 0 rgba(255,77,84,.5);
+  }
+  .dot.on { background: var(--signal); animation: pulse 1.8s ease-out infinite; }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(94,243,140,.55); }
+    70%  { box-shadow: 0 0 0 7px rgba(94,243,140,0); }
+    100% { box-shadow: 0 0 0 0 rgba(94,243,140,0); }
+  }
+  .rate {
+    font-family: var(--cond); letter-spacing: .12em; color: var(--faint);
+    text-transform: uppercase; font-size: 12px;
+    border-left: 1px solid var(--line); padding-left: 14px;
+  }
+  .rate b { color: var(--cyan); font-family: var(--mono); font-weight: 700; }
+
+  /* ---------- layout ---------- */
+  main {
+    position: relative; z-index: 1;
+    display: grid; gap: 16px; padding: 22px;
+    grid-template-columns: repeat(12, 1fr);
+    max-width: 1280px; margin: 0 auto;
+  }
+  .card {
+    position: relative; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 16px 17px 17px;
+    transition: opacity .35s, border-color .25s;
+  }
+  .card::before, .card::after {
+    content: ""; position: absolute; width: 9px; height: 9px; pointer-events: none;
+    border-color: var(--line-hi); border-style: solid; opacity: .9;
+  }
+  .card::before { top: 7px; left: 7px; border-width: 1px 0 0 1px; }
+  .card::after  { bottom: 7px; right: 7px; border-width: 0 1px 1px 0; }
+
+  .card h2 {
+    display: flex; align-items: center; gap: 8px; margin: 0 0 14px;
+    font-family: var(--cond); font-size: 12px; font-weight: 600;
+    letter-spacing: .2em; text-transform: uppercase; color: var(--dim);
+  }
+  .card h2 .idx { color: var(--faint); font-weight: 400; }
+  .card h2 .spacer { flex: 1; }
+  .card h2 .tagchip {
+    font-size: 10px; letter-spacing: .14em; color: var(--faint);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
+  }
+
+  .span-3 { grid-column: span 3; }
+  .span-4 { grid-column: span 4; }
+  .span-5 { grid-column: span 5; }
+  .span-12 { grid-column: 1 / -1; }
+  @media (max-width: 1000px) {
+    main { grid-template-columns: repeat(6, 1fr); }
+    .span-3, .span-4, .span-5 { grid-column: span 6; }
+  }
+  @media (max-width: 560px) { main { grid-template-columns: 1fr; padding: 14px; }
+    .span-3,.span-4,.span-5 { grid-column: 1 / -1; } }
+
+  .row { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; }
+  .row + .row { border-top: 1px dashed rgba(255,255,255,.04); }
+  .row .k { color: var(--dim); font-family: var(--cond); letter-spacing: .12em;
+            text-transform: uppercase; font-size: 12px; }
+  .row .v { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; }
+  .v .u { color: var(--faint); font-weight: 400; font-size: 12px; margin-left: 2px; }
+
+  /* ---------- LQ ring gauge ---------- */
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 4px 0 12px; }
+  .gauge {
+    --pct: 0; --c: var(--signal);
+    position: relative; width: 168px; height: 168px; border-radius: 50%;
+    background:
+      conic-gradient(var(--c) calc(var(--pct) * 1%), var(--line) 0);
+    transition: background .4s ease, filter .4s;
+    filter: drop-shadow(0 0 14px rgba(94,243,140,.18));
+    display: grid; place-items: center;
+  }
+  .gauge::before {
+    content: ""; position: absolute; inset: 13px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 35%, var(--panel-hi), var(--panel) 70%);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .gauge .read { position: relative; text-align: center; line-height: 1; }
+  .gauge .num { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .gauge .pc  { font-size: 18px; color: var(--dim); }
+  .gauge .cap { font-family: var(--cond); letter-spacing: .26em; font-size: 11px;
+                text-transform: uppercase; color: var(--dim); margin-top: 6px; }
+
+  /* horizontal meter */
+  .meter { height: 7px; background: var(--bg2); border-radius: 4px; overflow: hidden;
+           margin-top: 6px; box-shadow: inset 0 0 0 1px var(--line); }
+  .meter > span { display: block; height: 100%; width: 0%;
+                  background: var(--signal); transition: width .3s, background .3s; }
+
+  /* ---------- battery big readout ---------- */
+  .big { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 12px; }
+  .big .n { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: .9; }
+  .big .u { font-family: var(--cond); letter-spacing: .14em; color: var(--dim);
+            text-transform: uppercase; font-size: 15px; }
+
+  /* ---------- control input ---------- */
+  .ctrl-grid { display: grid; gap: 22px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .ctrl-grid { grid-template-columns: 1fr 200px; } }
+
+  .axis { margin: 11px 0; }
+  .axis .lbl { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+  .axis .lbl .name { font-family: var(--cond); letter-spacing: .16em; text-transform: uppercase;
+                     font-size: 12px; color: var(--dim); }
+  .axis .lbl .val { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; color: var(--cyan); }
+  .axis .track {
+    position: relative; height: 12px; background: var(--bg2); border-radius: 6px;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .axis .track::before {
+    content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px;
+    background: var(--line-hi);
+  }
+  .axis .fill {
+    position: absolute; top: 1px; bottom: 1px; border-radius: 5px;
+    background: linear-gradient(90deg, var(--cyan), var(--signal));
+    box-shadow: 0 0 10px -2px var(--signal); transition: left .06s linear, right .06s linear;
+  }
+
+  .btns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+  .btn {
+    aspect-ratio: 1; border-radius: 6px; background: var(--bg2);
+    box-shadow: inset 0 0 0 1px var(--line);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 500; color: var(--faint);
+    font-variant-numeric: tabular-nums; transition: all .12s;
+  }
+  .btn.on {
+    color: #04130a; background: var(--signal);
+    box-shadow: inset 0 0 0 1px var(--signal), 0 0 14px -2px var(--signal);
+  }
+  .sub-h { font-family: var(--cond); letter-spacing: .2em; text-transform: uppercase;
+           font-size: 11px; color: var(--faint); margin: 0 0 10px; }
+
+  .conn-chip { font-family: var(--cond); font-size: 11px; letter-spacing: .14em;
+               text-transform: uppercase; padding: 2px 8px; border-radius: 4px;
+               border: 1px solid var(--line); color: var(--dim); }
+  .conn-chip.on { color: var(--signal); border-color: var(--signal-dk);
+                  background: rgba(94,243,140,.06); }
+
+  .empty { color: var(--faint); font-family: var(--cond); letter-spacing: .14em;
+           text-transform: uppercase; font-size: 12px; padding: 6px 0; }
+
+  /* ---------- config editor ---------- */
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tab {
+    font-family: var(--cond); letter-spacing: .14em; text-transform: uppercase;
+    font-size: 12px; color: var(--dim); cursor: pointer; user-select: none;
+    padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg2); transition: all .12s;
+  }
+  .tab:hover { color: var(--txt); border-color: var(--line-hi); }
+  .tab.active {
+    color: var(--bg); background: var(--signal); border-color: var(--signal);
+    box-shadow: var(--glow);
+  }
+  .tab .dirty { color: var(--amber); margin-left: 6px; opacity: 0; }
+  .tab.active .dirty { color: rgba(0,0,0,.6); }
+  .tab.modified .dirty { opacity: 1; }
+
+  .editor {
+    width: 100%; min-height: 300px; resize: vertical;
+    background: #07090d; color: var(--txt); caret-color: var(--signal);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; font-family: var(--mono); font-size: 13px; line-height: 1.7;
+    tab-size: 4; outline: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.4);
+    transition: border-color .15s;
+  }
+  .editor:focus { border-color: var(--line-hi); box-shadow: inset 0 0 0 1px rgba(94,243,140,.12); }
+  .editor:disabled { opacity: .5; }
+
+  .editor-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  .editor-bar .msg {
+    font-family: var(--mono); font-size: 12px; color: var(--dim);
+    margin-right: auto; min-height: 16px; word-break: break-word;
+  }
+  .editor-bar .msg.ok  { color: var(--signal); }
+  .editor-bar .msg.err { color: var(--red); }
+  .editor-bar .hint { font-family: var(--cond); letter-spacing: .1em; text-transform: uppercase;
+                      font-size: 11px; color: var(--faint); margin-right: auto; }
+  .btn-sm {
+    font-family: var(--cond); letter-spacing: .14em; text-transform: uppercase;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 7px 16px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--bg2); color: var(--dim); transition: all .12s;
+  }
+  .btn-sm:hover:not(:disabled) { color: var(--txt); border-color: var(--line-hi); }
+  .btn-sm.primary { background: var(--signal); color: #04130a; border-color: var(--signal); }
+  .btn-sm.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-sm:disabled { opacity: .4; cursor: default; }
+
+  /* staleness: dim + desaturate a card whose feed went quiet */
+  .stale { opacity: .32; filter: saturate(.4); }
+  .stale .gauge { filter: none; }
+
+  footer {
+    position: relative; z-index: 1; text-align: center; color: var(--faint);
+    font-family: var(--cond); letter-spacing: .2em; text-transform: uppercase;
+    font-size: 11px; padding: 6px 0 26px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="mark">DS</span>
+    <h1>Driver Station</h1>
+    <span class="sub">ELRS&nbsp;Link</span>
+  </div>
+
+  <div class="field">
+    <span class="tag">WS</span>
+    <input id="url" value="ws://localhost:8080" spellcheck="false" />
+  </div>
+  <button id="toggle">Connect</button>
+  <span class="status"><span id="dot" class="dot"></span><span id="state">offline</span></span>
+  <span class="rate"><b id="rateN">0</b> msg/s</span>
+</header>
+
+<main>
+  <!-- LINK -->
+  <section class="card span-4" id="card-link">
+    <h2><span class="idx">01</span> Link Quality <span class="spacer"></span><span class="tagchip">UPLINK</span></h2>
+    <div class="gauge-wrap">
+      <div class="gauge" id="lqgauge">
+        <div class="read">
+          <span class="num" id="lq">—</span><span class="pc">%</span>
+          <div class="cap">Link&nbsp;Quality</div>
+        </div>
+      </div>
+    </div>
+    <div class="row"><span class="k">RSSI</span><span class="v" id="rssi">—</span></div>
+    <div class="meter"><span id="rssibar"></span></div>
+    <div class="row" style="margin-top:6px"><span class="k">SNR</span><span class="v" id="snr">—</span></div>
+  </section>
+
+  <!-- BATTERY -->
+  <section class="card span-3" id="card-batt">
+    <h2><span class="idx">02</span> Battery <span class="spacer"></span><span class="tagchip">PACK</span></h2>
+    <div class="big"><span class="n" id="voltage">—</span><span class="u">Volts</span></div>
+    <div class="row"><span class="k">Current</span><span class="v" id="current">—</span></div>
+    <div class="row"><span class="k">Consumed</span><span class="v" id="capacity">—</span></div>
+    <div class="row"><span class="k">Remaining</span><span class="v" id="remaining">—</span></div>
+    <div class="meter"><span id="rbar"></span></div>
+  </section>
+
+  <!-- STATS -->
+  <section class="card span-5" id="card-stats">
+    <h2><span class="idx">03</span> CRSF Telemetry <span class="spacer"></span><span class="tagchip">SERIAL</span></h2>
+    <div class="row"><span class="k">Packets&nbsp;RX</span><span class="v" id="packets">0</span></div>
+    <div class="row"><span class="k">CRC&nbsp;Errors</span><span class="v" id="crc">0</span></div>
+    <div class="row"><span class="k">Echoes&nbsp;Dropped</span><span class="v" id="echoes">0</span></div>
+    <div class="row"><span class="k">Throughput</span><span class="v"><span id="rateN2">0</span><span class="u">msg/s</span></span></div>
+  </section>
+
+  <!-- CONTROLS -->
+  <section class="card span-12" id="card-ctrl">
+    <h2><span class="idx">04</span> Control Input
+      <span class="spacer"></span>
+      <span class="conn-chip" id="jsconn">no stick</span>
+    </h2>
+    <div class="ctrl-grid">
+      <div>
+        <p class="sub-h">Axes</p>
+        <div id="axes"><div class="empty">awaiting joystick…</div></div>
+      </div>
+      <div>
+        <p class="sub-h">Buttons</p>
+        <div class="btns" id="buttons"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONFIG EDITOR -->
+  <section class="card span-12" id="card-config">
+    <h2><span class="idx">05</span> Configuration
+      <span class="spacer"></span>
+      <span class="tagchip" id="cfghint">live · validated on save</span>
+    </h2>
+    <div class="tabs">
+      <div class="tab active" data-tab="mapping" id="tab-mapping">Channel Map<span class="dirty">●</span></div>
+      <div class="tab" data-tab="radio" id="tab-radio">Radio / ELRS<span class="dirty">●</span></div>
+    </div>
+    <textarea id="editor" class="editor" spellcheck="false" autocomplete="off"
+      autocapitalize="off" wrap="off" placeholder="connect to load configuration…"></textarea>
+    <div class="editor-bar">
+      <span class="msg" id="cfgmsg"></span>
+      <button class="btn-sm" id="cfgRevert" disabled>Revert</button>
+      <button class="btn-sm" id="cfgReload">Reload</button>
+      <button class="btn-sm primary" id="cfgSave" disabled>Save &amp; Apply</button>
+    </div>
+  </section>
+</main>
+
+<footer>Driver Station · Single-wire CRSF · Echo-protected RX</footer>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let ws = null, want = false, msgCount = 0, lastTel = 0, lastJs = 0;
+
+  const setStatus = (txt, on) => {
+    $('state').textContent = txt;
+    $('dot').classList.toggle('on', !!on);
+  };
+
+  function connect() {
+    const url = $('url').value.trim();
+    try { ws = new WebSocket(url); }
+    catch (e) { setStatus('bad url', false); return; }
+    setStatus('linking…', false);
+
+    ws.onopen  = () => { setStatus('online', true); requestConfigs(); refreshCfg(); };
+    ws.onclose = () => { setStatus('offline', false); ws = null; refreshCfg(); if (want) setTimeout(connect, 1000); };
+    ws.onerror = () => setStatus('error', false);
+    ws.onmessage = ev => {
+      msgCount++;
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if      (m.type === 'telemetry')  { renderTelemetry(m); lastTel = performance.now(); }
+      else if (m.type === 'joystick')   { renderJoystick(m); lastJs = performance.now(); }
+      else if (m.type === 'config')     { onConfig(m); }
+      else if (m.type === 'saveResult') { onSaveResult(m); }
+    };
+  }
+
+  const wsSend = o => {
+    if (!ws || ws.readyState !== 1) return false;
+    ws.send(JSON.stringify(o)); return true;
+  };
+
+  function disconnect() { want = false; if (ws) ws.close(); }
+
+  $('toggle').onclick = () => {
+    want = !want;
+    $('toggle').textContent = want ? 'Disconnect' : 'Connect';
+    $('toggle').classList.toggle('live', want);
+    if (want) connect(); else disconnect();
+  };
+
+  const fmt = (v, d) => (v === undefined || v === null) ? '—'
+                      : (d === undefined ? v : Number(v).toFixed(d));
+  const u = s => `<span class="u">${s}</span>`;
+
+  // three-stop threshold colour (good / warn / bad) by a 0..100 value
+  function thresh(pct, warn, bad) {
+    return pct < bad ? 'var(--red)' : pct < warn ? 'var(--amber)' : 'var(--signal)';
+  }
+  // matching rgba for glows (keyed off the same thresholds)
+  function threshGlow(pct, warn, bad) {
+    return pct < bad ? 'rgba(255,77,84,.30)'
+         : pct < warn ? 'rgba(255,177,59,.28)'
+         : 'rgba(94,243,140,.30)';
+  }
+
+  function renderTelemetry(m) {
+    $('packets').textContent = (m.packets ?? 0).toLocaleString();
+    $('crc').innerHTML       = (m.crcErrors ?? 0) > 0
+        ? `<span style="color:var(--amber)">${m.crcErrors}</span>` : '0';
+    $('echoes').textContent  = (m.echoes ?? 0).toLocaleString();
+
+    // Link Quality ring
+    const lq = m.lq;
+    const g = $('lqgauge');
+    if (lq !== undefined) {
+      const c = thresh(lq, 80, 50);
+      g.style.setProperty('--pct', Math.max(0, Math.min(100, lq)));
+      g.style.setProperty('--c', c);
+      g.style.filter = `drop-shadow(0 0 14px ${threshGlow(lq, 80, 50)})`;
+      $('lq').textContent = lq;
+      $('lq').style.color = c;
+    } else {
+      g.style.setProperty('--pct', 0); $('lq').textContent = '—';
+    }
+
+    // RSSI (JSON carries the magnitude; link reports it negative)
+    if (m.rssi !== undefined) {
+      $('rssi').innerHTML = `-${m.rssi}${u('dBm')}`;
+      // crude strength map: ~50 dBm = full, ~110 dBm = floor
+      const strength = Math.max(0, Math.min(100, Math.round((110 - m.rssi) / 0.60)));
+      $('rssibar').style.width = strength + '%';
+      $('rssibar').style.background = thresh(strength, 55, 25);
+    } else { $('rssi').textContent = '—'; $('rssibar').style.width = '0%'; }
+
+    $('snr').innerHTML = m.snr !== undefined ? `${m.snr}${u('dB')}` : '—';
+
+    // Battery
+    $('voltage').textContent   = fmt(m.voltage, 1);
+    $('current').innerHTML     = m.current   !== undefined ? `${fmt(m.current,1)}${u('A')}` : '—';
+    $('capacity').innerHTML    = m.capacity  !== undefined ? `${m.capacity.toLocaleString()}${u('mAh')}` : '—';
+    $('remaining').innerHTML   = m.remaining !== undefined ? `${m.remaining}${u('%')}` : '—';
+    if (m.remaining !== undefined) {
+      $('rbar').style.width = Math.max(0, Math.min(100, m.remaining)) + '%';
+      $('rbar').style.background = thresh(m.remaining, 40, 20);
+    }
+  }
+
+  function renderJoystick(m) {
+    const chip = $('jsconn');
+    chip.textContent = m.connected ? 'connected' : 'disconnected';
+    chip.classList.toggle('on', !!m.connected);
+
+    const axes = m.axes || [], buttons = m.buttons || [];
+
+    const ax = $('axes');
+    if (ax.dataset.n !== String(axes.length)) {
+      ax.dataset.n = axes.length;
+      ax.innerHTML = axes.length
+        ? axes.map((_, i) =>
+            `<div class="axis"><div class="lbl"><span class="name">Axis ${String(i).padStart(2,'0')}</span>`
+          + `<span class="val" id="axv${i}">0.00</span></div>`
+          + `<div class="track"><div class="fill" id="axf${i}"></div></div></div>`).join('')
+        : '<div class="empty">awaiting joystick…</div>';
+    }
+    axes.forEach((v, i) => {
+      $('axv'+i).textContent = (v >= 0 ? '+' : '') + v.toFixed(2);
+      const f = $('axf'+i), pct = Math.max(-1, Math.min(1, v)) * 50;
+      if (pct >= 0) { f.style.left = '50%'; f.style.right = (50 - pct) + '%'; }
+      else          { f.style.right = '50%'; f.style.left = (50 + pct) + '%'; }
+    });
+
+    const bs = $('buttons');
+    if (bs.dataset.n !== String(buttons.length)) {
+      bs.dataset.n = buttons.length;
+      bs.innerHTML = buttons.length
+        ? buttons.map((_, i) => `<div class="btn" id="b${i}">${String(i).padStart(2,'0')}</div>`).join('')
+        : '<div class="empty" style="grid-column:1/-1">—</div>';
+    }
+    buttons.forEach((v, i) => $('b'+i).classList.toggle('on', !!v));
+  }
+
+  // ---------- config editor ----------
+  const cfg = {
+    mapping: { base: null, text: '', pending: null, loaded: false },
+    radio:   { base: null, text: '', pending: null, loaded: false },
+  };
+  let curTab = 'mapping';
+  const ed = $('editor');
+  const isOpen = () => ws && ws.readyState === 1;
+  const isDirty = n => cfg[n].loaded && cfg[n].text !== cfg[n].base;
+
+  function setMsg(t, cls) {
+    const el = $('cfgmsg');
+    el.textContent = t || '';
+    el.className = 'msg' + (cls ? ' ' + cls : '');
+  }
+
+  function refreshCfg() {
+    const c = cfg[curTab];
+    ed.disabled = !c.loaded;
+    $('cfgSave').disabled   = !(isOpen() && isDirty(curTab));
+    $('cfgRevert').disabled = !isDirty(curTab);
+    $('cfgReload').disabled = !isOpen();
+    document.querySelectorAll('.tab').forEach(t => {
+      const n = t.dataset.tab;
+      t.classList.toggle('active', n === curTab);
+      t.classList.toggle('modified', isDirty(n));
+    });
+  }
+
+  function showTab(name) {
+    curTab = name;
+    const c = cfg[name];
+    ed.value = c.loaded ? c.text : '';
+    ed.placeholder = isOpen() ? 'loading…' : 'connect to load configuration…';
+    setMsg('');
+    refreshCfg();
+  }
+
+  function requestConfigs() {
+    setMsg('loading…');
+    cfg.mapping.loaded = cfg.radio.loaded = false;
+    wsSend({ type: 'getConfig', name: 'mapping' });
+    wsSend({ type: 'getConfig', name: 'radio' });
+  }
+
+  function onConfig(m) {
+    const c = cfg[m.name];
+    if (!c) return;
+    c.base = c.text = m.content || '';
+    c.loaded = true;
+    if (m.name === curTab) {
+      ed.value = c.text;
+      setMsg(m.error ? m.error : '', m.error ? 'err' : '');
+    }
+    refreshCfg();
+  }
+
+  function onSaveResult(m) {
+    const c = cfg[m.name];
+    if (!c) return;
+    if (m.ok) {
+      c.base = (c.pending !== null) ? c.pending : c.base;   // saved snapshot is now clean
+      if (m.name === curTab) setMsg('saved · applied to ' + m.name, 'ok');
+    } else if (m.name === curTab) {
+      setMsg('✗ ' + (m.error || 'save rejected'), 'err');   // edits kept so you can fix
+    }
+    c.pending = null;
+    refreshCfg();
+  }
+
+  ed.addEventListener('input', () => {
+    cfg[curTab].text = ed.value;
+    setMsg('');
+    refreshCfg();
+  });
+  // Tab key inserts a tab instead of leaving the textarea.
+  ed.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    const s = ed.selectionStart, t = ed.selectionEnd;
+    ed.value = ed.value.slice(0, s) + '\t' + ed.value.slice(t);
+    ed.selectionStart = ed.selectionEnd = s + 1;
+    cfg[curTab].text = ed.value; refreshCfg();
+  });
+
+  document.querySelectorAll('.tab').forEach(t =>
+    t.addEventListener('click', () => showTab(t.dataset.tab)));
+
+  $('cfgSave').onclick = () => {
+    const c = cfg[curTab];
+    if (!c.loaded || !isDirty(curTab)) return;
+    c.pending = c.text;
+    if (wsSend({ type: 'saveConfig', name: curTab, content: c.text })) setMsg('saving…');
+    else { c.pending = null; setMsg('not connected', 'err'); }
+  };
+  $('cfgRevert').onclick = () => {
+    const c = cfg[curTab];
+    if (!isDirty(curTab)) return;
+    c.text = ed.value = c.base;
+    setMsg(''); refreshCfg();
+  };
+  $('cfgReload').onclick = () => {
+    if (wsSend({ type: 'getConfig', name: curTab })) setMsg('reloading from disk…');
+  };
+
+  // staleness + msg-rate
+  setInterval(() => {
+    $('rateN').textContent = msgCount;
+    $('rateN2').textContent = msgCount;
+    msgCount = 0;
+    const now = performance.now();
+    const telStale = now - lastTel > 1500;
+    $('card-link').classList.toggle('stale', telStale);
+    $('card-batt').classList.toggle('stale', telStale);
+    $('card-stats').classList.toggle('stale', telStale);
+    $('card-ctrl').classList.toggle('stale', now - lastJs > 1500);
+  }, 1000);
+
+  showTab('mapping');    // initial (disabled) editor state
+  $('toggle').click();   // auto-connect on load
+})();
+</script>
+</body>
+</html>

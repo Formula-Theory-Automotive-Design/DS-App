@@ -8,6 +8,7 @@ add_library(crsf-core STATIC
     src/crsf_parser.cpp
     src/crsf_encoder.cpp
     src/crsf_telemetry.cpp
+    src/crsf_params.cpp
 )
 
 target_include_directories(crsf-core PUBLIC
@@ -24,6 +25,7 @@ if(CRSF_CORE_BUILD_TESTS)
         tests/test_channels.cpp
         tests/test_parser.cpp
         tests/test_telemetry.cpp
+        tests/test_params.cpp
     )
     target_link_libraries(crsf_core_tests PRIVATE crsf-core)
     target_include_directories(crsf_core_tests PRIVATE tests)
